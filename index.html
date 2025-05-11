@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>特殊2048：文明对决</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen">
+  <div class="container mx-auto p-4">
+    <h1 class="text-3xl font-bold text-center mb-4">特殊2048：文明对决（双人模式）</h1>
+    <div class="flex justify-center mb-4">
+      <button id="newGame" class="bg-blue-500 text-white px-4 py-2 rounded">新游戏</button>
+    </div>
+    <div class="flex justify-center mb-4 flex-wrap gap-2">
+      <button id="split" class="bg-green-500 text-white px-4 py-2 rounded" disabled>分裂傀儡</button>
+      <button id="attack" class="bg-red-500 text-white px-4 py-2 rounded" disabled>进攻蛮族</button>
+      <button id="fighter" class="bg-purple-500 text-white px-4 py-2 rounded" disabled>战斗机</button>
+      <button id="army" class="bg-yellow-500 text-white px-4 py-2 rounded" disabled>常备军</button>
+      <button id="diplomacy" class="bg-teal-500 text-white px-4 py-2 rounded" disabled>外交策反</button>
+    </div>
+    <div id="status" class="text-center mb-4"></div>
+    <div id="gameBoard" class="grid grid-cols-4 gap-2 bg-gray-300 p-4 rounded w-[400px] mx-auto"></div>
+    <div class="mt-4 text-center">
+      <p>滑动或使用键盘（↑↓←→）移动格子</p>
+      <p>蓝色（红方）在下方，黄色（蓝方）在上方，红色为蛮族</p>
+      <p>每回合只能选择一种行动：滑动、进攻、分裂或技能</p>
+    </div>
+  </div>
+
+  <script>
+    const ROWS = 8, COLS = 4;
+    const board = Array(ROWS).fill().map(() => Array(COLS).fill(null));
+    const loyalty = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+    const turns = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+    let player = { core: { row: 3, col: 0, value: 2, type: 'core', owner: 'player' }, skills: {} };
+    let opponent = { core: { row: 0, col: 3, value: 2, type: 'core', owner: 'opponent' }, skills: {} };
+    let turn = 0;
+    let gameOver = false;
+    let currentPlayer = 'player';
+    let actionTaken = false;
+
+    function initGame() {
+      board.forEach(row => row.fill(null));
+      loyalty.forEach(row => row.fill(0));
+      turns.forEach(row => row.fill(0));
+      player = { core: { row: 3, col: 0, value: 2, type: 'core', owner: 'player' }, skills: {} };
+      opponent = { core: { row: 0, col: 3, value: 2, type: 'core', owner: 'opponent' }, skills: {} };
+      board[3][0] = player.core;
+      board[0][3] = opponent.core;
+      turn = 0;
+      gameOver = false;
+      currentPlayer = 'player';
+      actionTaken = false;
+      updateSkills();
+      renderBoard();
+      updateStatus();
+      enableButtons();
+    }
+
+    function updateSkills() {
+      [player, opponent].forEach(p => {
+        const v = p.core.value;
+        p.skills = {
+          civil: v >= 16,
+          servant: v >= 64,
+          government: v >= 256,
+          fighter: v >= 512,
+          army: v >= 1024,
+          culture: v >= 2048,
+          diplomacy: v >= 512
+        };
+      });
+    }
+
+    function renderBoard() {
+      const gameBoard = document.getElementById('gameBoard');
+      gameBoard.innerHTML = '';
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          const cell = document.createElement('div');
+          cell.className = 'w-20 h-20 flex items-center justify-center border rounded text-white text-lg font-bold';
+          if (i === 4) cell.className += ' bg-gray-500'; // 隔离带
+          if (board[i][j]) {
+            const { value, type, owner } = board[i][j];
+            cell.className += owner === 'player' ? ' bg-blue-400' : owner === 'opponent' ? ' bg-yellow-400' : ' bg-red-400';
+            cell.textContent = value;
+            if (type === 'puppet') cell.textContent += ` (${Math.round(loyalty[i][j])}%)`;
+          }
+          gameBoard.appendChild(cell);
+        }
+      }
+    }
+
+    function updateStatus() {
+      const status = document.getElementById('status');
+      const current = currentPlayer === 'player' ? '红方' : '蓝方';
+      status.innerHTML = `
+        <p>当前玩家: ${current}</p>
+        <p>红方本命: ${player.core.value} | 蓝方本命: ${opponent.core.value}</p>
+        <p>技能: ${Object.keys(currentPlayer === 'player' ? player.skills : opponent.skills).filter(k => (currentPlayer === 'player' ? player.skills : opponent.skills)[k]).join(', ')}</p>
+      `;
+    }
+
+    function enableButtons() {
+      const p = currentPlayer === 'player' ? player : opponent;
+      document.getElementById('split').disabled = gameOver || actionTaken || p.core.value <= 2;
+      document.getElementById('attack').disabled = gameOver || actionTaken || !canAttack(p);
+      document.getElementById('fighter').disabled = gameOver || actionTaken || !p.skills.fighter;
+      document.getElementById('army').disabled = gameOver || actionTaken || !p.skills.army;
+      document.getElementById('diplomacy').disabled = gameOver || actionTaken || !p.skills.diplomacy;
+    }
+
+    function canAttack(p) {
+      const { row, col, value } = p.core;
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      return dirs.some(([dr, dc]) => {
+        const nr = row + dr, nc = col + dc;
+        return nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc]?.type === 'barbarian' && board[nr][nc].value < value;
+      });
+    }
+
+    function move(direction) {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      let moved = false;
+      const merged = new Set();
+      if (direction === 'up') {
+        for (let j = 0; j < COLS; j++) {
+          for (let i = 1; i < ROWS; i++) {
+            if (board[i][j]) moved |= moveCell(i, j, -1, 0, merged);
+          }
+        }
+      } else if (direction === 'down') {
+        for (let j = 0; j < COLS; j++) {
+          for (let i = ROWS - 2; i >= 0; i--) {
+            if (board[i][j]) moved |= moveCell(i, j, 1, 0, merged);
+          }
+        }
+      } else if (direction === 'left') {
+        for (let i = 0; i < ROWS; i++) {
+          for (let j = 1; j < COLS; j++) {
+            if (board[i][j]) moved |= moveCell(i, j, 0, -1, merged);
+          }
+        }
+      } else if (direction === 'right') {
+        for (let i = 0; i < ROWS; i++) {
+          for (let j = COLS - 2; j >= 0; j--) {
+            if (board[i][j]) moved |= moveCell(i, j, 0, 1, merged);
+          }
+        }
+      }
+      if (moved) {
+        spawnBarbarian();
+        updateLoyalty();
+        checkRebellion();
+        checkGameOver();
+        endTurn();
+      } else {
+        actionTaken = false;
+      }
+    }
+
+    function moveCell(row, col, dr, dc, merged) {
+      let r = row, c = col;
+      let moved = false;
+      const cell = board[r][c];
+      while (r + dr >= 0 && r + dr < ROWS && c + dc >= 0 && c + dc < COLS) {
+        const nr = r + dr, nc = c + dc;
+        if (!board[nr][nc]) {
+          board[nr][nc] = { ...board[r][c], row: nr, col: nc };
+          board[r][c] = null;
+          loyalty[nr][nc] = loyalty[r][c];
+          turns[nr][nc] = turns[r][c];
+          loyalty[r][c] = 0;
+          turns[r][c] = 0;
+          r = nr;
+          c = nc;
+          moved = true;
+          if (cell.type === 'core') {
+            if (cell.owner === 'player') player.core = board[nr][nc];
+            else opponent.core = board[nr][nc];
+          }
+        } else if (canMerge(board[r][c], board[nr][nc]) && !merged.has(`${nr},${nc}`)) {
+          const newValue = board[nr][nc].value * 2;
+          const newOwner = board[r][c].owner; // 继承发起合并的 owner
+          const newType = board[nr][nc].type === 'core' ? 'core' : board[r][c].type === 'core' ? 'core' : 'puppet';
+          board[nr][nc] = { value: newValue, type: newType, owner: newOwner, row: nr, col: nc };
+          board[r][c] = null;
+          loyalty[nr][nc] = board[nr][nc].type === 'puppet' ? loyalty[nr][nc] : 0;
+          loyalty[r][c] = 0;
+          turns[r][c] = 0;
+          merged.add(`${nr},${nc}`);
+          moved = true;
+          if (board[nr][nc].type === 'core') {
+            if (board[nr][nc].owner === 'player') player.core = board[nr][nc];
+            else opponent.core = board[nr][nc];
+          }
+          if (board[nr][nc].type === 'puppet' && board[r][c].type === 'core' && board[r][c].owner !== board[nr][nc].owner) {
+            const winner = board[nr][nc].owner === 'player' ? '红方' : '蓝方';
+            const loser = board[nr][nc].owner === 'player' ? '蓝方' : '红方';
+            alert(`游戏结束：${winner}傀儡合并${loser}本命！${winner}胜利！`);
+            gameOver = true;
+          }
+          break;
+        } else {
+          break;
+        }
+      }
+      return moved;
+    }
+
+    function canMerge(a, b) {
+      if (!a || !b) return false;
+      if (a.type === 'core' && b.type === 'puppet' && a.owner === b.owner) return true;
+      if (a.type === 'puppet' && b.type === 'core' && a.owner === b.owner) return true;
+      if (a.type === 'core' && b.type === 'barbarian' && a.value === b.value) return true;
+      if (a.type === 'puppet' && b.type === 'core' && a.value === b.value && a.owner !== b.owner) return true;
+      return a.type === b.type && a.value === b.value && a.owner === b.owner;
+    }
+
+    function spawnBarbarian() {
+      const empty = [];
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (!board[i][j] && i !== 4) empty.push([i, j]);
+        }
+      }
+      if (empty.length) {
+        const [r, c] = empty[Math.floor(Math.random() * empty.length)];
+        board[r][c] = { value: Math.random() < 0.8 ? 2 : 4, type: 'barbarian', owner: null, row: r, col: c };
+      }
+    }
+
+    function updateLoyalty() {
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (board[i][j]?.type === 'puppet') {
+            turns[i][j]++;
+            const rate = board[i][j].owner === 'player' && player.skills.civil ? 2.5 : 5;
+            loyalty[i][j] = Math.max(0, loyalty[i][j] - rate);
+            if (board[i][j].owner === 'opponent' && player.skills.culture) loyalty[i][j] = Math.max(0, loyalty[i][j] - 5);
+            if (board[i][j].owner === 'player' && opponent.skills.culture) loyalty[i][j] = Math.max(0, loyalty[i][j] - 5);
+          }
+        }
+      }
+    }
+
+    function checkRebellion() {
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (board[i][j]?.type === 'puppet' && turns[i][j] > 18) {
+            const owner = board[i][j].owner === 'player' ? player : opponent;
+            if (!owner.skills.government && Math.random() < 0.5) {
+              board[i][j] = { ...board[i][j], type: 'barbarian', owner: null };
+              loyalty[i][j] = 0;
+            } else if (board[i][j].value > owner.core.value && loyalty[i][j] < 30) {
+              board[i][j] = { ...board[i][j], type: 'barbarian', owner: null };
+              loyalty[i][j] = 0;
+            }
+          }
+        }
+      }
+    }
+
+    function checkGameOver() {
+      const checkPlayer = (p, name) => {
+        const { row, col, value } = p.core;
+        const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        let surrounded = true;
+        for (const [dr, dc] of dirs) {
+          const nr = row + dr, nc = col + dc;
+          if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+            if (!board[nr][nc]) return false;
+            if (board[nr][nc].type === 'barbarian' && board[nr][nc].value > value) surrounded &= true;
+            else surrounded = false;
+          }
+        }
+        return surrounded;
+      };
+      if (checkPlayer(player, '红方')) {
+        alert('游戏结束：红方本命被蛮族包围！蓝方胜利！');
+        gameOver = true;
+      } else if (checkPlayer(opponent, '蓝方')) {
+        alert('游戏结束：蓝方本命被蛮族包围！红方胜利！');
+        gameOver = true;
+      } else if (!canMove()) {
+        alert('游戏结束：无路可走！平局！');
+        gameOver = true;
+      }
+    }
+
+    function canMove() {
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (!board[i][j]) return true;
+          const dirs = [[1, 0], [0, 1]];
+          for (const [dr, dc] of dirs) {
+            const nr = i + dr, nc = j + dc;
+            if (nr < ROWS && nc < COLS && board[nr][nc] && canMerge(board[i][j], board[nr][nc])) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function splitPuppet() {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      const p = currentPlayer === 'player' ? player : opponent;
+      const value = prompt('请输入分裂傀儡的数字（必须是2的幂且小于本命）');
+      const v = parseInt(value);
+      if (!v || v >= p.core.value || (v & (v - 1)) !== 0) {
+        alert('无效数字！');
+        actionTaken = false;
+        return;
+      }
+      const { row, col } = p.core;
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      const empty = dirs.map(([dr, dc]) => [row + dr, col + dc]).filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS && !board[r][c]);
+      if (!empty.length) {
+        alert('无空位分裂！');
+        actionTaken = false;
+        return;
+      }
+      const [r, c] = empty[Math.floor(Math.random() * empty.length)];
+      board[r][c] = { value: v, type: 'puppet', owner: currentPlayer, row: r, col: c };
+      loyalty[r][c] = p.skills.servant ? 80 : 60;
+      turns[r][c] = 0;
+      p.core.value -= v;
+      if (p.core.value < 2) p.core.value = 2;
+      checkGameOver();
+      endTurn();
+    }
+
+    function attackBarbarian() {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      const p = currentPlayer === 'player' ? player : opponent;
+      const { row, col, value } = p.core;
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      const targets = dirs.map(([dr, dc]) => [row + dr, col + dc]).filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS && board[r][c]?.type === 'barbarian' && board[r][c].value < value);
+      if (!targets.length) {
+        alert('无有效目标！');
+        actionTaken = false;
+        return;
+      }
+      const [r, c] = targets[Math.floor(Math.random() * targets.length)];
+      p.core.value -= board[r][c].value;
+      if (p.core.value < 2) p.core.value = 2;
+      board[r][c] = null;
+      checkGameOver();
+      endTurn();
+    }
+
+    function useFighter() {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      const p = currentPlayer === 'player' ? player : opponent;
+      const targets = [];
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (board[i][j]?.owner === (currentPlayer === 'player' ? 'opponent' : 'player') && board[i][j].type !== 'core') targets.push([i, j]);
+        }
+      }
+      if (!targets.length) {
+        alert('无有效目标！');
+        actionTaken = false;
+        return;
+      }
+      const [r, c] = targets[Math.floor(Math.random() * targets.length)];
+      board[r][c].value = Math.max(2, Math.floor(board[r][c].value / 2));
+      checkGameOver();
+      endTurn();
+    }
+
+    function useArmy() {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      const p = currentPlayer === 'player' ? player : opponent;
+      const targets = [];
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (board[i][j]?.type === 'puppet' && board[i][j].owner === currentPlayer) targets.push([i, j]);
+        }
+      }
+      if (!targets.length) {
+        alert('无有效傀儡！');
+        actionTaken = false;
+        return;
+      }
+      const [r, c] = targets[Math.floor(Math.random() * targets.length)];
+      loyalty[r][c] = 100;
+      checkGameOver();
+      endTurn();
+    }
+
+    function useDiplomacy() {
+      if (gameOver || actionTaken) return;
+      actionTaken = true;
+      const p = currentPlayer === 'player' ? player : opponent;
+      const targets = [];
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (board[i][j]?.type === 'puppet' && board[i][j].owner === (currentPlayer === 'player' ? 'opponent' : 'player') && loyalty[i][j] < 50) targets.push([i, j]);
+        }
+      }
+      if (!targets.length) {
+        alert('无有效目标！');
+        actionTaken = false;
+        return;
+      }
+      const [r, c] = targets[Math.floor(Math.random() * targets.length)];
+      if (Math.random() < (50 - loyalty[r][c]) / 50) {
+        board[r][c].owner = currentPlayer;
+        loyalty[r][c] = p.skills.servant ? 80 : 60;
+      }
+      checkGameOver();
+      endTurn();
+    }
+
+    function endTurn() {
+      if (gameOver) return;
+      updateSkills();
+      renderBoard();
+      updateStatus();
+      actionTaken = false;
+      currentPlayer = currentPlayer === 'player' ? 'opponent' : 'player';
+      enableButtons();
+      turn++;
+    }
+
+    document.getElementById('newGame').addEventListener('click', initGame);
+    document.getElementById('split').addEventListener('click', splitPuppet);
+    document.getElementById('attack').addEventListener('click', attackBarbarian);
+    document.getElementById('fighter').addEventListener('click', useFighter);
+    document.getElementById('army').addEventListener('click', useArmy);
+    document.getElementById('diplomacy').addEventListener('click', useDiplomacy);
+
+    document.addEventListener('keydown', e => {
+      if (gameOver || actionTaken) return;
+      if (e.key === 'ArrowUp') move('up');
+      else if (e.key === 'ArrowDown') move('down');
+      else if (e.key === 'ArrowLeft') move('left');
+      else if (e.key === 'ArrowRight') move('right');
+    });
+
+    let touchStart = null;
+    document.addEventListener('touchstart', e => {
+      touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    });
+    document.addEventListener('touchend', e => {
+      if (!touchStart || gameOver || actionTaken) return;
+      const touchEnd = { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+      const dx = touchEnd.x - touchStart.x, dy = touchEnd.y - touchStart.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 50) move('right');
+        else if (dx < -50) move('left');
+      } else {
+        if (dy > 50) move('down');
+        else if (dy < -50) move('up');
+      }
+      touchStart = null;
+    });
+
+    initGame();
+  </script>
+</body>
+</html>
