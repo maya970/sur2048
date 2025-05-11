@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>特殊2048：文明对决</title>
+  <title>特殊2048：文明对决（双人模式）</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen">
@@ -23,8 +23,21 @@
     <div id="gameBoard" class="grid grid-cols-4 gap-2 bg-gray-300 p-4 rounded w-[400px] mx-auto"></div>
     <div class="mt-4 text-center">
       <p>滑动或使用键盘（↑↓←→）移动格子</p>
-      <p>蓝色（红方）在下方，黄色（蓝方）在上方，红色为蛮族</p>
+      <p>蓝色（黄方）在下方，黄色（蓝方）在上方，红色为蛮族</p>
       <p>每回合只能选择一种行动：滑动、进攻、分裂或技能</p>
+    </div>
+    <!-- 分裂傀儡模态框 -->
+    <div id="splitModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+      <div class="bg-white p-6 rounded shadow-lg">
+        <h2 class="text-xl font-bold mb-4">分裂傀儡</h2>
+        <p class="mb-4">请输入傀儡值（正整数，小于本命值）</p>
+        <input id="splitValue" type="number" min="1" class="border p-2 w-full mb-4" placeholder="例如 2, 4, 8">
+        <div class="flex justify-end gap-2">
+          <button id="splitConfirm" class="bg-green-500 text-white px-4 py-2 rounded">确认</button>
+          <button id="splitCancel" class="bg-gray-500 text-white px-4 py-2 rounded">取消</button>
+        </div>
+        <p id="splitError" class="text-red-500 mt-2 hidden"></p>
+      </div>
     </div>
   </div>
 
@@ -56,6 +69,7 @@
       renderBoard();
       updateStatus();
       enableButtons();
+      console.log('Game initialized');
     }
 
     function updateSkills() {
@@ -80,24 +94,27 @@
         for (let j = 0; j < COLS; j++) {
           const cell = document.createElement('div');
           cell.className = 'w-20 h-20 flex items-center justify-center border rounded text-white text-lg font-bold';
-          if (i === 4) cell.className += ' bg-gray-500'; // 隔离带
+          if (i === 4) cell.className += ' bg-gray-500';
           if (board[i][j]) {
             const { value, type, owner } = board[i][j];
             cell.className += owner === 'player' ? ' bg-blue-400' : owner === 'opponent' ? ' bg-yellow-400' : ' bg-red-400';
             cell.textContent = value;
-            if (type === 'puppet') cell.textContent += ` (${Math.round(loyalty[i][j])}%)`;
+            if (type === 'puppet' && loyalty[i][j] > 0) {
+              cell.textContent += ` (${Math.round(loyalty[i][j])}%)`;
+            }
           }
           gameBoard.appendChild(cell);
         }
       }
+      console.log('Board rendered:', board.map(row => row.map(cell => cell ? `${cell.value}(${cell.type},${cell.owner})` : 'null')));
     }
 
     function updateStatus() {
       const status = document.getElementById('status');
-      const current = currentPlayer === 'player' ? '红方' : '蓝方';
+      const current = currentPlayer === 'player' ? '黄方' : '蓝方';
       status.innerHTML = `
-        <p>当前玩家: ${current}</p>
-        <p>红方本命: ${player.core.value} | 蓝方本命: ${opponent.core.value}</p>
+        <p>回合: ${turn} | 当前玩家: ${current}</p>
+        <p>黄方本命: ${player.core.value} | 蓝方本命: ${opponent.core.value}</p>
         <p>技能: ${Object.keys(currentPlayer === 'player' ? player.skills : opponent.skills).filter(k => (currentPlayer === 'player' ? player.skills : opponent.skills)[k]).join(', ')}</p>
       `;
     }
@@ -125,6 +142,7 @@
       actionTaken = true;
       let moved = false;
       const merged = new Set();
+      console.log(`Moving ${direction}, turn ${turn}`);
       if (direction === 'up') {
         for (let j = 0; j < COLS; j++) {
           for (let i = 1; i < ROWS; i++) {
@@ -150,6 +168,7 @@
           }
         }
       }
+      console.log(`Moved: ${moved}, Board state:`, board.map(row => row.map(cell => cell ? `${cell.value}(${cell.type},${cell.owner})` : 'null')));
       if (moved) {
         spawnBarbarian();
         updateLoyalty();
@@ -158,12 +177,14 @@
         endTurn();
       } else {
         actionTaken = false;
+        console.log('No move possible, action reset');
       }
     }
 
     function moveCell(row, col, dr, dc, merged) {
       let r = row, c = col;
       let moved = false;
+      if (!board[r][c]) return false;
       const cell = board[r][c];
       while (r + dr >= 0 && r + dr < ROWS && c + dc >= 0 && c + dc < COLS) {
         const nr = r + dr, nc = c + dc;
@@ -181,13 +202,14 @@
             if (cell.owner === 'player') player.core = board[nr][nc];
             else opponent.core = board[nr][nc];
           }
-        } else if (canMerge(board[r][c], board[nr][nc]) && !merged.has(`${nr},${nc}`)) {
+        } else if (board[nr][nc] && board[r][c] && canMerge(board[r][c], board[nr][nc]) && !merged.has(`${nr},${nc}`)) {
           const newValue = board[nr][nc].value * 2;
-          const newOwner = board[r][c].owner; // 继承发起合并的 owner
-          const newType = board[nr][nc].type === 'core' ? 'core' : board[r][c].type === 'core' ? 'core' : 'puppet';
+          const newOwner = board[r][c].owner || board[nr][nc].owner;
+          const newType = board[r][c].type === 'core' || board[nr][nc].type === 'core' ? 'core' : 'puppet';
+          console.log(`Merging (${r},${c}):${board[r][c].value}(${board[r][c].type},${board[r][c].owner}) with (${nr},${nc}):${board[nr][nc].value}(${board[nr][nc].type},${board[nr][nc].owner}) -> ${newValue}, type: ${newType}, owner: ${newOwner}`);
           board[nr][nc] = { value: newValue, type: newType, owner: newOwner, row: nr, col: nc };
           board[r][c] = null;
-          loyalty[nr][nc] = board[nr][nc].type === 'puppet' ? loyalty[nr][nc] : 0;
+          loyalty[nr][nc] = board[nr][nc].type === 'puppet' ? Math.max(loyalty[r][c], loyalty[nr][nc]) : 0;
           loyalty[r][c] = 0;
           turns[r][c] = 0;
           merged.add(`${nr},${nc}`);
@@ -196,9 +218,9 @@
             if (board[nr][nc].owner === 'player') player.core = board[nr][nc];
             else opponent.core = board[nr][nc];
           }
-          if (board[nr][nc].type === 'puppet' && board[r][c].type === 'core' && board[r][c].owner !== board[nr][nc].owner) {
-            const winner = board[nr][nc].owner === 'player' ? '红方' : '蓝方';
-            const loser = board[nr][nc].owner === 'player' ? '蓝方' : '红方';
+          if (board[r][c]?.type === 'puppet' && board[nr][nc].type === 'core' && board[r][c].owner !== board[nr][nc].owner) {
+            const winner = board[r][c].owner === 'player' ? '黄方' : '蓝方';
+            const loser = board[r][c].owner === 'player' ? '蓝方' : '黄方';
             alert(`游戏结束：${winner}傀儡合并${loser}本命！${winner}胜利！`);
             gameOver = true;
           }
@@ -211,9 +233,12 @@
     }
 
     function canMerge(a, b) {
-      if (!a || !b) return false;
-      if (a.type === 'core' && b.type === 'puppet' && a.owner === b.owner) return true;
-      if (a.type === 'puppet' && b.type === 'core' && a.owner === b.owner) return true;
+      if (!a || !b) {
+        console.log('canMerge: One of the tiles is null', a, b);
+        return false;
+      }
+      if (a.type === 'core' && b.type === 'puppet' && a.owner === b.owner) return a.value === b.value;
+      if (a.type === 'puppet' && b.type === 'core' && a.owner === b.owner) return a.value === b.value;
       if (a.type === 'core' && b.type === 'barbarian' && a.value === b.value) return true;
       if (a.type === 'puppet' && b.type === 'core' && a.value === b.value && a.owner !== b.owner) return true;
       return a.type === b.type && a.value === b.value && a.owner === b.owner;
@@ -229,6 +254,9 @@
       if (empty.length) {
         const [r, c] = empty[Math.floor(Math.random() * empty.length)];
         board[r][c] = { value: Math.random() < 0.8 ? 2 : 4, type: 'barbarian', owner: null, row: r, col: c };
+        loyalty[r][c] = 0;
+        turns[r][c] = 0;
+        console.log(`Spawned barbarian at (${r},${c}) with value ${board[r][c].value}`);
       }
     }
 
@@ -237,10 +265,11 @@
         for (let j = 0; j < COLS; j++) {
           if (board[i][j]?.type === 'puppet') {
             turns[i][j]++;
-            const rate = board[i][j].owner === 'player' && player.skills.civil ? 2.5 : 5;
+            const rate = board[i][j].owner === 'player' && player.skills.civil ? 1.5 : 3;
             loyalty[i][j] = Math.max(0, loyalty[i][j] - rate);
             if (board[i][j].owner === 'opponent' && player.skills.culture) loyalty[i][j] = Math.max(0, loyalty[i][j] - 5);
             if (board[i][j].owner === 'player' && opponent.skills.culture) loyalty[i][j] = Math.max(0, loyalty[i][j] - 5);
+            console.log(`Puppet at (${i},${j}) loyalty: ${loyalty[i][j]}%, turns: ${turns[i][j]}`);
           }
         }
       }
@@ -249,14 +278,18 @@
     function checkRebellion() {
       for (let i = 0; i < ROWS; i++) {
         for (let j = 0; j < COLS; j++) {
-          if (board[i][j]?.type === 'puppet' && turns[i][j] > 18) {
-            const owner = board[i][j].owner === 'player' ? player : opponent;
+          if (board[i][j]?.type === 'puppet' && turns[i][j] >= 18) {
+            const owner = board[i][j].owner === '　　　　　　　　player' ? player : opponent;
             if (!owner.skills.government && Math.random() < 0.5) {
+              console.log(`Puppet at (${i},${j}) rebels to barbarian`);
               board[i][j] = { ...board[i][j], type: 'barbarian', owner: null };
               loyalty[i][j] = 0;
+              turns[i][j] = 0;
             } else if (board[i][j].value > owner.core.value && loyalty[i][j] < 30) {
+              console.log(`Puppet at (${i},${j}) rebels due to low loyalty and high value`);
               board[i][j] = { ...board[i][j], type: 'barbarian', owner: null };
               loyalty[i][j] = 0;
+              turns[i][j] = 0;
             }
           }
         }
@@ -271,55 +304,76 @@
         for (const [dr, dc] of dirs) {
           const nr = row + dr, nc = col + dc;
           if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
-            if (!board[nr][nc]) return false;
-            if (board[nr][nc].type === 'barbarian' && board[nr][nc].value > value) surrounded &= true;
-            else surrounded = false;
+            if (!board[nr][nc]) {
+              console.log(`${name} not surrounded: empty cell at (${nr},${nc})`);
+              return false;
+            }
+            if (board[nr][nc]?.type === 'barbarian' && board[nr][nc].value > value) {
+              surrounded &= true;
+            } else {
+              surrounded = false;
+            }
           }
         }
+        console.log(`${name} surrounded: ${surrounded}`);
         return surrounded;
       };
-      if (checkPlayer(player, '红方')) {
-        alert('游戏结束：红方本命被蛮族包围！蓝方胜利！');
+      if (checkPlayer(player, '黄方')) {
+        alert('游戏结束：黄方本命被蛮族包围！蓝方胜利！');
         gameOver = true;
+        console.log('Game over: Red surrounded');
       } else if (checkPlayer(opponent, '蓝方')) {
-        alert('游戏结束：蓝方本命被蛮族包围！红方胜利！');
+        alert('游戏结束：蓝方本命被蛮族包围！黄方胜利！');
         gameOver = true;
+        console.log('Game over: Blue surrounded');
       } else if (!canMove()) {
         alert('游戏结束：无路可走！平局！');
         gameOver = true;
+        console.log('Game over: No moves possible');
       }
     }
 
     function canMove() {
       for (let i = 0; i < ROWS; i++) {
         for (let j = 0; j < COLS; j++) {
-          if (!board[i][j]) return true;
-          const dirs = [[1, 0], [0, 1]];
+          if (!board[i][j]) {
+            console.log(`Can move: empty cell at (${i},${j})`);
+            return true;
+          }
+          const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
           for (const [dr, dc] of dirs) {
             const nr = i + dr, nc = j + dc;
-            if (nr < ROWS && nc < COLS && board[nr][nc] && canMerge(board[i][j], board[nr][nc])) return true;
+            if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc] && canMerge(board[i][j], board[nr][nc])) {
+              console.log(`Can merge at (${i},${j}) with (${nr},${nc})`);
+              return true;
+            }
           }
         }
       }
+      console.log('No moves available');
       return false;
     }
 
-    function splitPuppet() {
+    function splitPuppet(value) {
       if (gameOver || actionTaken) return;
       actionTaken = true;
       const p = currentPlayer === 'player' ? player : opponent;
-      const value = prompt('请输入分裂傀儡的数字（必须是2的幂且小于本命）');
       const v = parseInt(value);
-      if (!v || v >= p.core.value || (v & (v - 1)) !== 0) {
-        alert('无效数字！');
+      if (!v || v <= 0 || v >= p.core.value) {
+        document.getElementById('splitError').textContent = '请输入小于本命值的正整数！';
+        document.getElementById('splitError').classList.remove('hidden');
         actionTaken = false;
         return;
       }
-      const { row, col } = p.core;
-      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-      const empty = dirs.map(([dr, dc]) => [row + dr, col + dc]).filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS && !board[r][c]);
+      const empty = [];
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if (!board[i][j] && i !== 4) empty.push([i, j]);
+        }
+      }
       if (!empty.length) {
-        alert('无空位分裂！');
+        document.getElementById('splitError').textContent = '无空位分裂！';
+        document.getElementById('splitError').classList.remove('hidden');
         actionTaken = false;
         return;
       }
@@ -329,6 +383,10 @@
       turns[r][c] = 0;
       p.core.value -= v;
       if (p.core.value < 2) p.core.value = 2;
+      console.log(`Split puppet at (${r},${c}) with value ${v}, loyalty ${loyalty[r][c]}%`);
+      document.getElementById('splitModal').classList.add('hidden');
+      document.getElementById('splitValue').value = '';
+      document.getElementById('splitError').classList.add('hidden');
       checkGameOver();
       endTurn();
     }
@@ -349,6 +407,7 @@
       p.core.value -= board[r][c].value;
       if (p.core.value < 2) p.core.value = 2;
       board[r][c] = null;
+      console.log(`Attacked barbarian at (${r},${c}), core value now ${p.core.value}`);
       checkGameOver();
       endTurn();
     }
@@ -370,6 +429,7 @@
       }
       const [r, c] = targets[Math.floor(Math.random() * targets.length)];
       board[r][c].value = Math.max(2, Math.floor(board[r][c].value / 2));
+      console.log(`Fighter halved value at (${r},${c}) to ${board[r][c].value}`);
       checkGameOver();
       endTurn();
     }
@@ -391,6 +451,7 @@
       }
       const [r, c] = targets[Math.floor(Math.random() * targets.length)];
       loyalty[r][c] = 100;
+      console.log(`Army set puppet at (${r},${c}) to 100% loyalty`);
       checkGameOver();
       endTurn();
     }
@@ -414,6 +475,7 @@
       if (Math.random() < (50 - loyalty[r][c]) / 50) {
         board[r][c].owner = currentPlayer;
         loyalty[r][c] = p.skills.servant ? 80 : 60;
+        console.log(`Diplomacy stole puppet at (${r},${c})`);
       }
       checkGameOver();
       endTurn();
@@ -428,10 +490,28 @@
       currentPlayer = currentPlayer === 'player' ? 'opponent' : 'player';
       enableButtons();
       turn++;
+      console.log(`Turn ${turn} ended, current player: ${currentPlayer}`);
     }
 
+    // 模态框事件
+    document.getElementById('split').addEventListener('click', () => {
+      if (!gameOver && !actionTaken) {
+        document.getElementById('splitModal').classList.remove('hidden');
+        document.getElementById('splitValue').focus();
+      }
+    });
+    document.getElementById('splitConfirm').addEventListener('click', () => {
+      const value = document.getElementById('splitValue').value;
+      splitPuppet(value);
+    });
+    document.getElementById('splitCancel').addEventListener('click', () => {
+      document.getElementById('splitModal').classList.add('hidden');
+      document.getElementById('splitValue').value = '';
+      document.getElementById('splitError').classList.add('hidden');
+      actionTaken = false;
+    });
+
     document.getElementById('newGame').addEventListener('click', initGame);
-    document.getElementById('split').addEventListener('click', splitPuppet);
     document.getElementById('attack').addEventListener('click', attackBarbarian);
     document.getElementById('fighter').addEventListener('click', useFighter);
     document.getElementById('army').addEventListener('click', useArmy);
